@@ -24,6 +24,7 @@ from docx.shared import RGBColor, Pt, Inches
 from docx.enum.text import WD_COLOR, WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.text.paragraph import Paragraph
 
 from bs4 import BeautifulSoup
 
@@ -38,6 +39,34 @@ DEFAULT_TABLE_STYLE = None
 # Style to use with paragraphs. By default no style is used.
 DEFAULT_PARAGRAPH_STYLE = None
 
+
+class ParagraphExt:
+
+    p = None
+
+    def __init__(self, p: Paragraph):
+        self.p = p
+
+    def restart_numbering(self):
+        """
+        Restarting the numbering of paragraph
+        """
+
+        # Getting the abstract number of paragraph
+        abstract_num_id = self.p.part.document.part.numbering_part.element.num_having_numId(
+            self.p.style.element.get_or_add_pPr().get_or_add_numPr().numId.val).abstractNumId.val
+
+        # Add abstract number to numbering part and reset
+        num = self.p.part.numbering_part.element.add_num(abstract_num_id)
+        num.add_lvlOverride(ilvl=0).add_startOverride(1)
+
+        # Get or add elements to paragraph
+        p_pr = self.p._p.get_or_add_pPr()
+        num_pr = p_pr.get_or_add_numPr()
+        ilvl = num_pr.get_or_add_ilvl()
+        ilvl.val = int("0")
+        num_id = num_pr.get_or_add_numId()
+        num_id.val = int(num.numId)
 
 def get_filename_from_url(url):
     return os.path.basename(urlparse(url).path)
@@ -267,7 +296,39 @@ class HtmlToDocx(HTMLParser):
         string_dict = dict([x.split(':') for x in new_string if ':' in x])
         return string_dict
 
+    
     def handle_li(self):
+
+        def get_opening_tag_text(tag):
+            return str(tag).split('>')[0] + '>'
+
+        def __is_first_ol_element(HTMLParser__startag_text: str) -> bool:
+            """determines if ol is first of ol list using starttag with id.
+
+
+            Args:
+                HTMLParser__startag_text (str): starttag as obtained by parser.
+
+            Returns:
+                bool: True if the case, False otherwise
+            """
+
+            all_ordered_lists_in_html_snippet = self.soup.find_all("ol")
+            
+            for ol in all_ordered_lists_in_html_snippet:
+                try:
+                    # Check if the first non-whitespace element in the ol matches the start tag
+                    for item in ol.contents:
+                        if re.match(r'^\s+$', str(item)):
+                            continue
+                        elif get_opening_tag_text(item) == HTMLParser__startag_text:
+                            return True
+                        else:
+                            break
+                except Exception as e:
+                    return False
+            return False
+        
         # check list stack to determine style and depth
         list_depth = len(self.tags['list'])
         if list_depth:
@@ -280,7 +341,12 @@ class HtmlToDocx(HTMLParser):
         else:
             list_style = styles['LIST_BULLET']
 
-        self.paragraph = self.doc.add_paragraph(style=list_style)            
+        self.paragraph = self.doc.add_paragraph(style=list_style)    
+
+        wrapped = ParagraphExt(self.paragraph)
+        if list_type == 'ol' and __is_first_ol_element(HTMLParser__startag_text=self._HTMLParser__starttag_text):
+            wrapped.restart_numbering()
+
         self.paragraph.paragraph_format.left_indent = Inches(min(list_depth * LIST_INDENT, MAX_INDENT))
         self.paragraph.paragraph_format.line_spacing = 1
 
