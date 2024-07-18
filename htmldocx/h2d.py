@@ -207,6 +207,7 @@ class HtmlToDocx(HTMLParser):
         ]
         self.table_style = DEFAULT_TABLE_STYLE
         self.paragraph_style = DEFAULT_PARAGRAPH_STYLE
+        self.on_first_tag = False
 
     def set_initial_attrs(self, document=None):
         self.tags = {
@@ -298,36 +299,6 @@ class HtmlToDocx(HTMLParser):
 
     
     def handle_li(self):
-
-        def get_opening_tag_text(tag):
-            return str(tag).split('>')[0] + '>'
-
-        def __is_first_ol_element(HTMLParser__startag_text: str) -> bool:
-            """determines if ol is first of ol list using starttag with id.
-
-
-            Args:
-                HTMLParser__startag_text (str): starttag as obtained by parser.
-
-            Returns:
-                bool: True if the case, False otherwise
-            """
-
-            all_ordered_lists_in_html_snippet = self.soup.find_all("ol")
-            
-            for ol in all_ordered_lists_in_html_snippet:
-                try:
-                    # Check if the first non-whitespace element in the ol matches the start tag
-                    for item in ol.contents:
-                        if re.match(r'^\s+$', str(item)):
-                            continue
-                        elif get_opening_tag_text(item) == HTMLParser__startag_text:
-                            return True
-                        else:
-                            break
-                except Exception as e:
-                    return False
-            return False
         
         # check list stack to determine style and depth
         list_depth = len(self.tags['list'])
@@ -344,7 +315,7 @@ class HtmlToDocx(HTMLParser):
         self.paragraph = self.doc.add_paragraph(style=list_style)    
 
         wrapped = ParagraphExt(self.paragraph)
-        if list_type == 'ol' and __is_first_ol_element(HTMLParser__startag_text=self._HTMLParser__starttag_text):
+        if list_type == 'ol' and self.on_first_tag:
             wrapped.restart_numbering()
 
         self.paragraph.paragraph_format.left_indent = Inches(min(list_depth * LIST_INDENT, MAX_INDENT))
@@ -466,6 +437,7 @@ class HtmlToDocx(HTMLParser):
         self.paragraph._p.append(hyperlink)
 
     def handle_starttag(self, tag, attrs):
+
         if self.skip:
             return
         if tag == 'head':
@@ -483,6 +455,7 @@ class HtmlToDocx(HTMLParser):
             return
         elif tag == 'ol' or tag == 'ul':
             self.tags['list'].append(tag)
+            self.on_first_tag = True
             return # don't apply styles for now
         elif tag == 'br':
             self.run.add_break()
@@ -495,6 +468,7 @@ class HtmlToDocx(HTMLParser):
 
         elif tag == 'li':
             self.handle_li()
+            self.on_first_tag = False
 
         elif tag == "hr":
 
