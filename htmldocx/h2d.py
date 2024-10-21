@@ -255,7 +255,11 @@ class HtmlToDocx(HTMLParser):
             if units == 'px':
                 self.paragraph.paragraph_format.left_indent = Inches(min(margin // 10 * INDENT, MAX_INDENT))
             # TODO handle non px units
-
+        if 'space-after' in style:
+            space_after = style['space-after']
+            space_after = int(float(re.sub(r'[a-z]+', '', space_after)))
+            self.paragraph.paragraph_format.space_after = Pt(space_after)
+            
     def add_styles_to_run(self, style):
         if 'color' in style:
             if 'rgb' in style['color']:
