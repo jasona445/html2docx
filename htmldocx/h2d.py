@@ -441,6 +441,8 @@ class HtmlToDocx(HTMLParser):
         self.paragraph._p.append(hyperlink)
 
     def handle_starttag(self, tag, attrs):
+        if not hasattr(self, 'run'):
+            return
 
         if self.skip:
             return
