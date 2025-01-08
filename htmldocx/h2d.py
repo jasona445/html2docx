@@ -381,7 +381,13 @@ class HtmlToDocx(HTMLParser):
             except KeyError as e:
                 raise ValueError(f"Unable to apply style {self.table_style}.") from e
 
+        child_parser = HtmlToDocx()
+        child_parser.copy_settings_from(self)
+
         rows = self.get_table_rows(table_soup)
+        table_cells = self.table._cells
+        table_column_count = self.table._column_count
+
         cell_row = 0
         for row in rows:
             cols = self.get_table_columns(row)
@@ -390,9 +396,8 @@ class HtmlToDocx(HTMLParser):
                 cell_html = self.get_cell_html(col)
                 if col.name == 'th':
                     cell_html = "<b>%s</b>" % cell_html
-                docx_cell = self.table.cell(cell_row, cell_col)
-                child_parser = HtmlToDocx()
-                child_parser.copy_settings_from(self)
+                cell_idx = cell_col + (cell_row * table_column_count)
+                docx_cell = table_cells[cell_idx]
                 child_parser.add_html_to_cell(cell_html, docx_cell)
                 cell_col += 1
             cell_row += 1
