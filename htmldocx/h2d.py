@@ -286,6 +286,11 @@ class HtmlToDocx(HTMLParser):
                 # TODO map colors to named colors (and extended colors...)
                 # For now set color to black to prevent crashing
             self.run.font.highlight_color = WD_COLOR.GRAY_25 #TODO: map colors
+        
+        if 'font-size' in style:
+            font_size = style['font-size']
+            font_size = int(float(re.sub(r'[a-z]+', '', font_size)))
+            self.run.font.size = Pt(font_size)
 
     def apply_paragraph_style(self, style=None):
         try:
