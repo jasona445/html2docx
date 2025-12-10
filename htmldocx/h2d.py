@@ -28,6 +28,20 @@ from docx.text.paragraph import Paragraph
 
 from bs4 import BeautifulSoup
 
+
+def sanitize_xml_text(text):
+    """
+    Remove characters that are not valid in XML 1.0.
+    Valid characters are: Tab (0x09), Line Feed (0x0A), Carriage Return (0x0D),
+    and characters >= 0x20 (except the surrogates 0xD800-0xDFFF).
+    """
+    if not isinstance(text, str):
+        return text
+
+    # Filter out NULL bytes and control characters (except tab, LF, CR)
+    return ''.join(char for char in text if ord(char) in (0x09, 0x0A, 0x0D) or ord(char) >= 0x20)
+
+
 # values in inches
 INDENT = 0.25
 LIST_INDENT = 0.5
@@ -442,7 +456,8 @@ class HtmlToDocx(HTMLParser):
         rPr.append(u)
 
         subrun._r.append(rPr)
-        subrun._r.text = text
+        # Sanitize text to remove invalid XML characters
+        subrun._r.text = sanitize_xml_text(text)
 
         # Add subrun to hyperlink
         hyperlink.append(subrun._r)
@@ -587,7 +602,9 @@ class HtmlToDocx(HTMLParser):
             self.handle_link(link['href'], data)
         else:
             # If there's a link, dont put the data directly in the run
-            self.run = self.paragraph.add_run(data)
+            # Sanitize data to remove invalid XML characters
+            sanitized_data = sanitize_xml_text(data)
+            self.run = self.paragraph.add_run(sanitized_data)
             spans = self.tags['span']
             for span in spans:
                 if 'style' in span:
