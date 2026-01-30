@@ -273,6 +273,16 @@ class HtmlToDocx(HTMLParser):
             space_after = style['space-after']
             space_after = int(float(re.sub(r'[a-z]+', '', space_after)))
             self.paragraph.paragraph_format.space_after = Pt(space_after)
+        
+        # Store font-weight and font-style in paragraph attributes for later application to runs
+        # This is needed because paragraph-level styles need to be applied to runs when they're created
+        if 'font-weight' in style or 'font-style' in style:
+            if not hasattr(self.paragraph, '_html_styles'):
+                self.paragraph._html_styles = {}
+            if 'font-weight' in style:
+                self.paragraph._html_styles['font-weight'] = style['font-weight']
+            if 'font-style' in style:
+                self.paragraph._html_styles['font-style'] = style['font-style']
             
     def add_styles_to_run(self, style):
         if 'color' in style:
@@ -305,6 +315,22 @@ class HtmlToDocx(HTMLParser):
             font_size = style['font-size']
             font_size = int(float(re.sub(r'[a-z]+', '', font_size)))
             self.run.font.size = Pt(font_size)
+        
+        # Handle font-weight for bold text
+        if 'font-weight' in style:
+            font_weight = style['font-weight'].strip().lower()
+            if font_weight in ['bold', '700', '800', '900']:
+                self.run.font.bold = True
+            elif font_weight in ['normal', '400']:
+                self.run.font.bold = False
+        
+        # Handle font-style for italic text
+        if 'font-style' in style:
+            font_style = style['font-style'].strip().lower()
+            if font_style == 'italic':
+                self.run.font.italic = True
+            elif font_style == 'normal':
+                self.run.font.italic = False
 
     def apply_paragraph_style(self, style=None):
         try:
@@ -610,6 +636,16 @@ class HtmlToDocx(HTMLParser):
                 if 'style' in span:
                     style = self.parse_dict_string(span['style'])
                     self.add_styles_to_run(style)
+
+            # Apply paragraph-level font styles (from style attribute on p, div, etc.)
+            if hasattr(self.paragraph, '_html_styles'):
+                para_style = {}
+                if 'font-weight' in self.paragraph._html_styles:
+                    para_style['font-weight'] = self.paragraph._html_styles['font-weight']
+                if 'font-style' in self.paragraph._html_styles:
+                    para_style['font-style'] = self.paragraph._html_styles['font-style']
+                if para_style:
+                    self.add_styles_to_run(para_style)
 
             # add font style and name
             for tag in self.tags:
