@@ -21,7 +21,7 @@ from html.parser import HTMLParser
 import docx, docx.table
 from docx import Document
 from docx.shared import RGBColor, Pt, Inches
-from docx.enum.text import WD_COLOR, WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
@@ -40,6 +40,74 @@ def sanitize_xml_text(text):
 
     # Filter out NULL bytes and control characters (except tab, LF, CR)
     return ''.join(char for char in text if ord(char) in (0x09, 0x0A, 0x0D) or ord(char) >= 0x20)
+
+
+# Limited named colors for HTML background-color (same spirit as forecolor TODOs).
+_CSS_NAMED_BACKGROUND_COLORS = {
+    "orange": (255, 165, 0),
+    "white": (255, 255, 255),
+    "black": (0, 0, 0),
+    "red": (255, 0, 0),
+    "green": (0, 128, 0),
+    "blue": (0, 0, 255),
+    "yellow": (255, 255, 0),
+    "gray": (128, 128, 128),
+    "grey": (128, 128, 128),
+}
+
+
+def _parse_css_background_rgb(css_value):
+    """Return (r, g, b) each 0–255, or None if unparseable / transparent."""
+    if not css_value or not isinstance(css_value, str):
+        return None
+    v = css_value.strip()
+    if not v:
+        return None
+    lower = v.lower()
+    if lower in ("transparent", "inherit", "initial", "unset"):
+        return None
+    if v.startswith("#"):
+        hexs = v[1:]
+        try:
+            if len(hexs) == 6:
+                return tuple(int(hexs[i : i + 2], 16) for i in (0, 2, 4))
+            if len(hexs) == 3:
+                return tuple(int(c * 2, 16) for c in hexs)
+        except ValueError:
+            return None
+        return None
+    if lower.startswith("rgb"):
+        try:
+            inner = v[v.index("(") + 1 : v.rindex(")")]
+        except ValueError:
+            return None
+        parts = [p.strip() for p in inner.split(",")]
+        if len(parts) < 3:
+            return None
+        try:
+            r = int(float(parts[0]))
+            g = int(float(parts[1]))
+            b = int(float(parts[2]))
+            return (
+                max(0, min(255, r)),
+                max(0, min(255, g)),
+                max(0, min(255, b)),
+            )
+        except (ValueError, IndexError):
+            return None
+    return _CSS_NAMED_BACKGROUND_COLORS.get(lower)
+
+
+def _apply_run_background_shading(run, red, green, blue):
+    """Apply OOXML run shading (w:shd) so arbitrary RGB matches HTML background-color."""
+    fill = f"{red:02X}{green:02X}{blue:02X}"
+    r_pr = run._element.get_or_add_rPr()
+    for existing in r_pr.findall(qn("w:shd")):
+        r_pr.remove(existing)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), fill)
+    r_pr.append(shd)
 
 
 # values in inches
@@ -299,17 +367,10 @@ class HtmlToDocx(HTMLParser):
             self.run.font.color.rgb = RGBColor(*colors)
             
         if 'background-color' in style:
-            if 'rgb' in style['background-color']:
-                color = color = re.sub(r'[a-z()]+', '', style['background-color'])
-                colors = [int(x) for x in color.split(',')]
-            elif '#' in style['background-color']:
-                color = style['background-color'].lstrip('#')
-                colors = tuple(int(color[i:i+2], 16) for i in (0, 2, 4))
-            else:
-                colors = [0, 0, 0]
-                # TODO map colors to named colors (and extended colors...)
-                # For now set color to black to prevent crashing
-            self.run.font.highlight_color = WD_COLOR.GRAY_25 #TODO: map colors
+            rgb = _parse_css_background_rgb(style['background-color'])
+            if rgb is not None:
+                _apply_run_background_shading(self.run, *rgb)
+
         
         if 'font-size' in style:
             font_size = style['font-size']
