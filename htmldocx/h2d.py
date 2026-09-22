@@ -469,6 +469,24 @@ class HtmlToDocx(HTMLParser):
                 self.doc.add_paragraph("<image: %s>" % get_filename_from_url(src))
         # add styles?
 
+    @staticmethod
+    def _parse_table_span(cell, attr):
+        """Parse a colspan/rowspan attribute as a positive int (default 1)."""
+        try:
+            return max(1, int(cell.get(attr, 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    def _get_table_spans(self, table_soup):
+        """Parsed (element, colspan, rowspan) cells for each row of a table."""
+        return [
+            [
+                (col, self._parse_table_span(col, 'colspan'), self._parse_table_span(col, 'rowspan'))
+                for col in self.get_table_columns(row)
+            ]
+            for row in self.get_table_rows(table_soup)
+        ]
+
     def handle_table(self):
         """
         To handle nested tables, we will parse tables manually as follows:
@@ -476,10 +494,16 @@ class HtmlToDocx(HTMLParser):
         Create docx table
         Iterate over soup and fill docx table with new instances of this parser
         Tell HTMLParser to ignore any tags until the corresponding closing table tag
+
+        Tables are sized by logical column count (colspans expanded, ragged
+        rows widened to the widest row) and cells are placed on an occupancy
+        grid so colspan/rowspan merges never overflow the table or shift
+        later cells into the wrong column. All cell content is preserved.
         """
         table_soup = self.tables[self.table_no]
-        rows, cols = self.get_table_dimensions(table_soup)
-        self.table = self.doc.add_table(rows, cols)
+        spanned_rows = self._get_table_spans(table_soup)
+        rows_count, table_column_count = self.get_table_dimensions(table_soup)
+        self.table = self.doc.add_table(rows_count, table_column_count)
 
         if self.table_style:
             try:
@@ -490,24 +514,35 @@ class HtmlToDocx(HTMLParser):
         child_parser = HtmlToDocx()
         child_parser.copy_settings_from(self)
 
-        rows = self.get_table_rows(table_soup)
-        table_cells = self.table._cells
-        table_column_count = self.table._column_count
+        # Marks grid cells covered by an earlier colspan/rowspan merge so
+        # later cells keep their visual column instead of shifting left.
+        occupied = [[False] * table_column_count for _ in range(rows_count)]
 
-        cell_row = 0
-        for row in rows:
-            cols = self.get_table_columns(row)
+        for cell_row, cols in enumerate(spanned_rows):
             cell_col = 0
-            for col in cols:
+            for col, colspan, rowspan in cols:
+                # Dimensions are measured from these same spans above, so the
+                # cursor always lands inside the table; a mismatch surfaces
+                # here instead of being hidden by a geometry-changing fallback.
+                while occupied[cell_row][cell_col]:
+                    cell_col += 1
+                # Rowspan is bound to the existing rows; colspan needs no
+                # clamping since the width already accounts for every span.
+                rowspan = min(rowspan, rows_count - cell_row)
                 cell_html = self.get_cell_html(col)
                 if col.name == 'th':
                     cell_html = "<b>%s</b>" % cell_html
-                cell_idx = cell_col + (cell_row * table_column_count)
-                docx_cell = table_cells[cell_idx]
+                docx_cell = self.table.cell(cell_row, cell_col)
                 child_parser.add_html_to_cell(cell_html, docx_cell)
-                cell_col += 1
-            cell_row += 1
-        
+                if colspan > 1 or rowspan > 1:
+                    docx_cell.merge(
+                        self.table.cell(cell_row + rowspan - 1, cell_col + colspan - 1)
+                    )
+                for occupied_row in range(cell_row, cell_row + rowspan):
+                    for occupied_col in range(cell_col, cell_col + colspan):
+                        occupied[occupied_row][occupied_col] = True
+                cell_col += colspan
+
         # skip all tags until corresponding closing tag
         self.instances_to_skip = len(table_soup.find_all('table'))
         self.skip_tag = 'table'
@@ -745,13 +780,31 @@ class HtmlToDocx(HTMLParser):
         return row.find_all(['th', 'td'], recursive=False) if row else []
 
     def get_table_dimensions(self, table_soup):
-        # Get rows for the table
-        rows = self.get_table_rows(table_soup)
-        # Table is either empty or has non-direct children between table and tr tags
-        # Thus the row dimensions and column dimensions are assumed to be 0
-
-        cols = self.get_table_columns(rows[0]) if rows else []
-        return len(rows), len(cols)
+        # Logical dimensions: the column count is the widest row, where a
+        # cell with colspan counts for that many columns and rowspans from
+        # above occupy columns in later rows. (An empty table, or one with
+        # non-direct children between table and tr tags, is 0 wide.)
+        spanned_rows = self._get_table_spans(table_soup)
+        if not spanned_rows:
+            return 0, 0
+        occupied_until = []
+        max_cols = 0
+        for row_no, cols in enumerate(spanned_rows):
+            col_no = 0
+            for _, colspan, rowspan in cols:
+                while col_no < len(occupied_until) and occupied_until[col_no] >= row_no:
+                    col_no += 1
+                while len(occupied_until) < col_no + colspan:
+                    occupied_until.append(-1)
+                for i in range(col_no, col_no + colspan):
+                    occupied_until[i] = max(occupied_until[i], row_no + rowspan - 1)
+                col_no += colspan
+            trailing = 0
+            for i, until in enumerate(occupied_until):
+                if until >= row_no:
+                    trailing = i + 1
+            max_cols = max(max_cols, col_no, trailing)
+        return len(spanned_rows), max_cols
 
     def get_tables(self):
         if not hasattr(self, 'soup'):
